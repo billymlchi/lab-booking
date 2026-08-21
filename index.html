@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>校內實驗室預約系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+</head>
+<body class="bg-slate-50 font-sans min-h-screen text-slate-800">
+
+  <!-- 頂部導覽列 -->
+  <header class="bg-indigo-700 text-white shadow-md">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+      <h1 class="text-xl font-bold tracking-wide">校內實驗室預約系統</h1>
+      <div class="space-x-2">
+        <button id="tab-ryan" onclick="switchAdmin('Ryan')" class="px-4 py-2 rounded-lg font-medium transition bg-white text-indigo-700 shadow">Ryan 管理實驗室</button>
+        <button id="tab-wilson" onclick="switchAdmin('Wilson')" class="px-4 py-2 rounded-lg font-medium transition bg-indigo-600 text-white hover:bg-indigo-500">Wilson 管理實驗室</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+    
+    <!-- 左側：申請預約表單 & 管理員區塊 -->
+    <div class="space-y-6">
+      
+      <!-- 預約表單 -->
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-lg font-bold mb-4 text-slate-700 flex items-center gap-2">
+          📝 提交預約申請 (<span id="current-admin-label">Ryan</span>)
+        </h2>
+        <form id="booking-form" onsubmit="submitBooking(event)" class="space-y-4">
+          <div>
+            <label class="block text-sm font-semibold mb-1">教師姓名</label>
+            <input type="text" id="teacherName" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold mb-1">班別</label>
+            <input type="text" id="className" placeholder="例如：3A" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold mb-1">預約日期</label>
+            <input type="date" id="date" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold mb-1">時段 / 節數</label>
+            <input type="text" id="timeSlot" placeholder="例如：第3-4節 (10:00-11:30)" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold mb-1">實驗題目</label>
+            <textarea id="topic" rows="3" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"></textarea>
+          </div>
+          <button type="submit" class="w-full bg-indigo-600 text-white font-semibold py-2 rounded-lg hover:bg-indigo-700 transition">送出預約申請</button>
+        </form>
+      </div>
+
+      <!-- 管理員審核入口 -->
+      <div class="bg-slate-100 p-4 rounded-xl border border-slate-200">
+        <h3 class="font-bold text-slate-700 mb-2">🔐 管理員專區</h3>
+        <p class="text-xs text-slate-500 mb-3">請輸入管理密碼以展開待審核清單。</p>
+        <div class="flex gap-2 mb-3">
+          <input type="password" id="admin-pass" placeholder="管理員密碼" class="px-3 py-1.5 text-sm border rounded-lg w-full">
+          <button onclick="loadPendingList()" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700">登入</button>
+        </div>
+        <div id="pending-container" class="hidden space-y-2 max-h-60 overflow-y-auto"></div>
+      </div>
+
+    </div>
+
+    <!-- 右側：可視化行事曆 -->
+    <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-slate-700">📅 實驗室預約日程表</h2>
+        <div class="flex gap-4 text-xs font-medium">
+          <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span> 待審核 (Pending)</span>
+          <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> 已確認 (Approved)</span>
+        </div>
+      </div>
+      <div id="calendar" class="min-h-[500px]"></div>
+    </div>
+
+  </main>
+
+  <script>
+    // ⚠️ 請替換為你剛才部署的 Google Apps Script API URL
+    const API_URL = "https://script.google.com/macros/s/AKfycbznYjrsDaRF7SzwKD27QYCW6bF-1gNIa8WgOdguhqf4Gb_cS5zvr0AwDrbOIUnOGJWP/exec";
+
+    let currentAdmin = "Ryan";
+    let calendar;
+    let rawBookings = [];
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const calendarEl = document.getElementById('calendar');
+      calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        locale: 'zh-tw',
+        headerToolbar: {
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,timeGridWeek'
+        },
+        events: []
+      });
+      calendar.render();
+      fetchBookings();
+    });
+
+    function switchAdmin(admin) {
+      currentAdmin = admin;
+      document.getElementById('current-admin-label').innerText = admin;
+      
+      const tabRyan = document.getElementById('tab-ryan');
+      const tabWilson = document.getElementById('tab-wilson');
+      
+      if (admin === 'Ryan') {
+        tabRyan.className = "px-4 py-2 rounded-lg font-medium transition bg-white text-indigo-700 shadow";
+        tabWilson.className = "px-4 py-2 rounded-lg font-medium transition bg-indigo-600 text-white hover:bg-indigo-500";
+      } else {
+        tabWilson.className = "px-4 py-2 rounded-lg font-medium transition bg-white text-indigo-700 shadow";
+        tabRyan.className = "px-4 py-2 rounded-lg font-medium transition bg-indigo-600 text-white hover:bg-indigo-500";
+      }
+
+      document.getElementById('pending-container').classList.add('hidden');
+      fetchBookings();
+    }
+
+    async function fetchBookings() {
+      try {
+        const res = await fetch(`${API_URL}?action=read&admin=${currentAdmin}`);
+        rawBookings = await res.json();
+        
+        // 轉譯資料給 FullCalendar
+        const events = rawBookings
+          .filter(b => b.Status !== 'rejected')
+          .map(b => ({
+            title: `[${b.ClassName}] ${b.TeacherName} - ${b.Topic}`,
+            start: b.Date,
+            backgroundColor: b.Status === 'approved' ? '#10b981' : '#f59e0b',
+            borderColor: b.Status === 'approved' ? '#059669' : '#d97706',
+          }));
+
+        calendar.removeAllEvents();
+        calendar.addEventSource(events);
+      } catch (err) {
+        console.error("載入失敗：", err);
+      }
+    }
+
+    async function submitBooking(e) {
+      e.preventDefault();
+      const data = {
+        action: 'create',
+        admin: currentAdmin,
+        teacherName: document.getElementById('teacherName').value,
+        className: document.getElementById('className').value,
+        date: document.getElementById('date').value,
+        timeSlot: document.getElementById('timeSlot').value,
+        topic: document.getElementById('topic').value
+      };
+
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+      const result = await res.json();
+      alert(result.message);
+      document.getElementById('booking-form').reset();
+      fetchBookings();
+    }
+
+    function loadPendingList() {
+      const pass = document.getElementById('admin-pass').value;
+      if (!pass) return alert("請輸入密碼");
+
+      const pending = rawBookings.filter(b => b.Status === 'pending');
+      const container = document.getElementById('pending-container');
+      container.innerHTML = "";
+
+      if (pending.length === 0) {
+        container.innerHTML = `<div class="text-xs text-slate-500">目前沒有待審核預約。</div>`;
+      } else {
+        pending.forEach(item => {
+          const div = document.createElement('div');
+          div.className = "p-2 bg-white rounded border border-slate-200 text-xs space-y-1";
+          div.innerHTML = `
+            <div><strong>${item.TeacherName}</strong> (${item.ClassName})</div>
+            <div>${item.Date} | ${item.TimeSlot}</div>
+            <div class="text-slate-500">${item.Topic}</div>
+            <div class="flex gap-2 pt-1">
+              <button onclick="reviewBooking('${item.ID}', 'approve')" class="bg-emerald-600 text-white px-2 py-0.5 rounded">核准</button>
+              <button onclick="reviewBooking('${item.ID}', 'reject')" class="bg-rose-600 text-white px-2 py-0.5 rounded">退回</button>
+            </div>
+          `;
+          container.appendChild(div);
+        });
+      }
+      container.classList.remove('hidden');
+    }
+
+    async function reviewBooking(id, action) {
+      const pass = document.getElementById('admin-pass').value;
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: action,
+          admin: currentAdmin,
+          id: id,
+          password: pass
+        })
+      });
+      const result = await res.json();
+      alert(result.message);
+      if (result.status === 'success') {
+        fetchBookings();
+        document.getElementById('pending-container').classList.add('hidden');
+      }
+    }
+  </script>
+</body>
+</html>
